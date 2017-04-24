@@ -148,7 +148,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
         if connection is not None:
             for stream_id, stream in connection.stream_delegates.iteritems():
-                if stream._can_be_finished():
+                if stream._can_be_finished:
                     processed_requests[id(stream.request)] = stream_id
                     stream.code = 418
                     stream.reason = 'WTF'
@@ -801,7 +801,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         if self._finalized:
             return True
 
-        if self._can_be_finished():
+        if self._can_be_finished:
             self.code = 418
             self.reason = 'WTF'
             self.finish()
