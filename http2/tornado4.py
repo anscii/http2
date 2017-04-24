@@ -144,7 +144,16 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         self.io_stream = None
         self.connection = None
 
+        processed_requests = {}
+
         if connection is not None:
+            for stream_id, stream in connection.stream_delegates.iteritems():
+                if stream._can_be_finished():
+                    processed_requests[id(stream.request)] = stream_id
+                    stream.code = 418
+                    stream.reason = 'WTF'
+                    stream.finish()
+
             connection.on_connection_close(io_stream.error)
 
         # schedule back-off
@@ -174,9 +183,11 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
         # move active request to pending
         for key, (request, callback) in self.active.items():
-            req = _HTTP2Stream.prepare_request(request, self.host)
-            self.queue.appendleft((key, req, callback))
-            self.waiting[key] = (None, None, None)  # @NOTICE: in this case we need only key in waiting
+            already_done = id(request) in processed_requests
+            if not already_done:
+                req = _HTTP2Stream.prepare_request(request, self.host)
+                self.queue.appendleft((key, req, callback))
+                self.waiting[key] = (None, None, None)  # @NOTICE: in this case we need only key in waiting
 
         self.active.clear()
 
@@ -782,7 +793,20 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         else:
             self._data_received(chunk)
 
+    @property
+    def _can_be_finished(self):
+        return (self.request.body and self._pending_body is None) or not self.request.body
+
     def handle_exception(self, typ, error, tb):
+        if self._finalized:
+            return True
+
+        if self._can_be_finished():
+            self.code = 418
+            self.reason = 'WTF'
+            self.finish()
+            return True
+
         if isinstance(error, _RequestTimeout):
             if self._stream_ended:
                 self.finish()
