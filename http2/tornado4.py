@@ -206,6 +206,16 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         self.active.clear()
 
     def _connection_terminated(self, event):
+        for stream_id, stream in self.connection.stream_delegates.iteritems():
+            if not stream._sent and stream_id <= event.last_stream_id: # all these streams were processed by server
+                stream._sent = True
+
+            if stream._sent:  # we can finish fully sent streams with some special status
+                stream.code = 418
+                stream.reason = 'WTF'
+                stream.finish()
+
+        # all not-sent streams will call callback with common http error
         self._on_connection_close(
             self.io_stream, 'Server requested, code: %s, last_stream_id: %s, additional_data: %s '
             % (event.error_code, event.last_stream_id, event.additional_data))
