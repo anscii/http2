@@ -144,7 +144,27 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         self.io_stream = None
         self.connection = None
 
+        finished_requests = {}
+        requeued_requests = {}
+
         if connection is not None:
+            for stream_id, stream in connection.stream_delegates.iteritems():
+
+                if stream._sent:
+                    finished_requests[id(stream.request)] = stream
+                else:
+                    requeued_requests[id(stream.request)] = stream
+
+            for stream in finished_requests.values():
+                stream.force_finish()
+
+            for stream in requeued_requests.values():
+                stream._finalized = True
+                key = object()
+                req = _HTTP2Stream.prepare_request(stream.request, self.host)
+                self.queue.appendleft((key, req, stream.final_callback))
+                self.waiting[key] = (None, None, None)  # @NOTICE: in this case we need only key in waiting
+
             connection.on_connection_close(io_stream.error)
 
         # schedule back-off
@@ -174,13 +194,24 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
         # move active request to pending
         for key, (request, callback) in self.active.items():
-            req = _HTTP2Stream.prepare_request(request, self.host)
-            self.queue.appendleft((key, req, callback))
-            self.waiting[key] = (None, None, None)  # @NOTICE: in this case we need only key in waiting
+            already_done = id(request) in finished_requests or id(request) in requeued_requests
+            if not already_done:  # was added to self.active but not processed yet
+                
+                req = _HTTP2Stream.prepare_request(request, self.host)
+                self.queue.appendleft((key, req, callback))
+                self.waiting[key] = (None, None, None)  # @NOTICE: in this case we need only key in waiting
 
         self.active.clear()
 
     def _connection_terminated(self, event):
+        for stream_id, stream in self.connection.stream_delegates.iteritems():
+            if not stream._sent and stream_id <= event.last_stream_id: # all these streams were processed by server
+                stream._sent = True
+
+            if stream._sent:  # we can finish fully sent streams with some special status
+                stream.force_finish()
+
+        # all not-sent streams will call callback with common http error
         self._on_connection_close(
             self.io_stream, 'Server requested, code: %s, last_stream_id: %s, additional_data: %s '
             % (event.error_code, event.last_stream_id, event.additional_data))
@@ -491,6 +522,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         self._finalized = False
         self._decompressor = None
         self._pending_body = None
+        self._sent = False
 
         self.stream_id = stream_id
         self.request = request
@@ -531,6 +563,8 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         if request.body:
             self._pending_body = request.body
             self.send_body()
+        else:
+            self._sent = True
 
     def send_body(self, append=True):
         h2_conn = self.context.h2_conn
@@ -555,6 +589,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
                     self.context.flow_control.appendleft(self)
         else:
             self._pending_body = None
+            self._sent = True
 
         self.context._flush_to_stream()
 
@@ -585,6 +620,11 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
 
         if len(self._pushed_streams) == len(self._pushed_responses):
             self.finish()
+
+    def force_finish(self):
+        self.code = 418
+        self.reason = 'Unknown request status'
+        self.finish()
 
     @classmethod
     def prepare_request(cls, request, default_host):
@@ -783,6 +823,13 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
             self._data_received(chunk)
 
     def handle_exception(self, typ, error, tb):
+        if self._finalized:
+            return True
+
+        if self._sent:
+            self.force_finish()
+            return True
+
         if isinstance(error, _RequestTimeout):
             if self._stream_ended:
                 self.finish()
