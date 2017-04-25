@@ -144,15 +144,28 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         self.io_stream = None
         self.connection = None
 
-        processed_requests = {}
+        finished_requests = {}
+        requeued_requests = {}
 
         if connection is not None:
             for stream_id, stream in connection.stream_delegates.iteritems():
-                if stream._can_be_finished:
-                    processed_requests[id(stream.request)] = stream_id
-                    stream.code = 418
-                    stream.reason = 'WTF'
-                    stream.finish()
+
+                if stream._sent:
+                    finished_requests[id(stream.request)] = stream
+                else:
+                    requeued_requests[id(stream.request)] = stream
+
+            for stream in finished_requests.values():
+                stream.code = 418
+                stream.reason = 'WTF'
+                stream.finish()
+
+            for stream in requeued_requests.values():
+                stream._finalized = True
+                key = object()
+                req = _HTTP2Stream.prepare_request(stream.request, self.host)
+                self.queue.appendleft((key, req, stream.final_callback))
+                self.waiting[key] = (None, None, None)  # @NOTICE: in this case we need only key in waiting
 
             connection.on_connection_close(io_stream.error)
 
@@ -183,8 +196,9 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
         # move active request to pending
         for key, (request, callback) in self.active.items():
-            already_done = id(request) in processed_requests
-            if not already_done:
+            already_done = id(request) in finished_requests or id(request) in requeued_requests
+            if not already_done:  # was added to self.active but not processed yet
+                
                 req = _HTTP2Stream.prepare_request(request, self.host)
                 self.queue.appendleft((key, req, callback))
                 self.waiting[key] = (None, None, None)  # @NOTICE: in this case we need only key in waiting
@@ -502,6 +516,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         self._finalized = False
         self._decompressor = None
         self._pending_body = None
+        self._sent = False
 
         self.stream_id = stream_id
         self.request = request
@@ -542,6 +557,8 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         if request.body:
             self._pending_body = request.body
             self.send_body()
+        else:
+            self._sent = True
 
     def send_body(self, append=True):
         h2_conn = self.context.h2_conn
@@ -566,6 +583,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
                     self.context.flow_control.appendleft(self)
         else:
             self._pending_body = None
+            self._sent = True
 
         self.context._flush_to_stream()
 
@@ -793,15 +811,11 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         else:
             self._data_received(chunk)
 
-    @property
-    def _can_be_finished(self):
-        return (self.request.body and self._pending_body is None) or not self.request.body
-
     def handle_exception(self, typ, error, tb):
         if self._finalized:
             return True
 
-        if self._can_be_finished:
+        if self._sent:
             self.code = 418
             self.reason = 'WTF'
             self.finish()
