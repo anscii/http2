@@ -156,9 +156,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
                     requeued_requests[id(stream.request)] = stream
 
             for stream in finished_requests.values():
-                stream.code = 418
-                stream.reason = 'WTF'
-                stream.finish()
+                stream.force_finish()
 
             for stream in requeued_requests.values():
                 stream._finalized = True
@@ -211,9 +209,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
                 stream._sent = True
 
             if stream._sent:  # we can finish fully sent streams with some special status
-                stream.code = 418
-                stream.reason = 'WTF'
-                stream.finish()
+                stream.force_finish()
 
         # all not-sent streams will call callback with common http error
         self._on_connection_close(
@@ -625,6 +621,11 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         if len(self._pushed_streams) == len(self._pushed_responses):
             self.finish()
 
+    def force_finish(self):
+        self.code = 418
+        self.reason = 'Unknown request status'
+        self.finish()
+
     @classmethod
     def prepare_request(cls, request, default_host):
         parsed = urlparse.urlsplit(_unicode(request.url))
@@ -826,9 +827,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
             return True
 
         if self._sent:
-            self.code = 418
-            self.reason = 'WTF'
-            self.finish()
+            self.force_finish()
             return True
 
         if isinstance(error, _RequestTimeout):
