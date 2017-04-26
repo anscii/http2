@@ -92,7 +92,8 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
                    hostname_mapping=None, max_buffer_size=104857600,
                    resolver=None, defaults=None, secure=True,
                    cert_options=None, enable_push=False, connect_timeout=20,
-                   request_timeout=20, initial_window_size=65535, **conn_kwargs):
+                   request_timeout=20, initial_window_size=65535, tcp_client=None,
+                   **conn_kwargs):
         # initially, we disables stream multiplexing and wait the settings frame
         super(SimpleAsyncHTTP2Client, self).initialize(
             io_loop=io_loop, max_clients=1,
@@ -110,6 +111,8 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
         self.connect_timeout = connect_timeout
         self.request_timeout = request_timeout
+        if tcp_client is not None:
+            self.tcp_client = tcp_client
         self.connection_factory = _HTTP2ConnectionFactory(
             io_loop=self.io_loop, host=host, port=port,
             max_buffer_size=self.max_buffer_size, secure=secure,
@@ -310,6 +313,7 @@ class _HTTP2ConnectionFactory(object):
 
     @classmethod
     def _handle_exception(cls, close_callback, typ, value, tb):
+        logger.warning("Exception %s connecting: %s", typ, value)
         close_callback(io_stream=None, reason=value)
         return True
 
@@ -368,7 +372,9 @@ class _HTTP2ConnectionContext(object):
 
         self.add_event_handler(h2.events.WindowUpdated, self.window_updated)
 
-        self._setup_reading()
+        self.io_stream.read_until_close(
+            streaming_callback=self._on_connection_streaming
+        )
         self._flush_to_stream()
 
     def on_connection_close(self, reason):
@@ -487,15 +493,6 @@ class _HTTP2ConnectionContext(object):
 
         for stream_id, stream_inbound in stream_inbounds.items():
             self.h2_conn.acknowledge_received_data(stream_inbound, stream_id)
-
-    def _setup_reading(self, *_):
-        if self.is_closed:
-            return
-
-        with stack_context.NullContext():
-            self.io_stream.read_bytes(
-                num_bytes=65535, callback=self._setup_reading,
-                streaming_callback=self._on_connection_streaming)
 
 
 class _HTTP2Stream(httputil.HTTPMessageDelegate):
@@ -742,8 +739,9 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
             if self._pending_body is not None:
                 # we still have data to send, server responded earlier
                 self._pending_body = None
-                self.context.h2_conn.end_stream( self.stream_id )
-                self.context._flush_to_stream()
+                self.context.reset_stream(
+                    self.stream_id, reason=ErrorCodes.NO_ERROR, flush=True
+                )
             self.context.remove_stream_delegate(self.stream_id)
             if len(self._pushed_responses) == len(self._pushed_streams):
                 self.finish()
