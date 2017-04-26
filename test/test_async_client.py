@@ -72,6 +72,7 @@ class TestSimpleAsyncHTTP2Client(AsyncTestCase):
 
         client = self._init_client(host=host, port=port, secure=True)
         res = yield client.fetch(url, method='POST', body='{}', raise_error=False)
+        self.assertIsNotNone(res)
 
 if __name__ == '__main__':
     unittest.main()
