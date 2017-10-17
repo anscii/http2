@@ -361,7 +361,6 @@ class _HTTP2ConnectionContext(object):
         # h2 contexts
         self.stream_delegates = {}
         self.event_handlers = {}  # connection level event, event -> handler
-        self.reset_stream_ids = collections.deque(maxlen=50)
         self.h2_conn = h2.connection.H2Connection()
         self.h2_conn.initiate_connection()
         self.h2_conn.update_settings({
@@ -468,15 +467,7 @@ class _HTTP2ConnectionContext(object):
                     with stack_context.ExceptionStackContext(stream_delegate.handle_exception):
                         stream_delegate.handle_event(event)
                 else:
-                    # FIXME: our nginx server will simply reset stream,
-                    # without increase the window size which consumed by
-                    # queued data frame which was belongs to the stream we're resetting
-                    # self.reset_stream(stream_id)
-                    if stream_id in self.reset_stream_ids:
-                        if isinstance(event, h2.events.StreamEnded):
-                            self.reset_stream_ids.remove(stream_id)
-                    else:
-                        logger.warning('Unexpected stream: %s, event: %r', stream_id, event)
+                    self.reset_stream(stream_id)
 
                 continue
 
@@ -839,12 +830,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         self._unregister_unfinished_streams()
         if hasattr(self, 'stream_id'):
             self.context.remove_stream_delegate(self.stream_id)
-
-            # FIXME: our nginx server will simply reset stream,
-            # without increase the window size which consumed by
-            # queued data frame which was belongs to the stream we're resetting
-            # self.context.reset_stream(self.stream_id, flush=True)
-            self.context.reset_stream_ids.append(self.stream_id)
+            self.context.reset_stream(self.stream_id, flush=True)
 
         error.__traceback__ = tb
         response = HTTP2Response(
