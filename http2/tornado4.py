@@ -530,20 +530,12 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
         return http_headers
 
     def send_request(self, request):
-        http2_headers = []
-        http2_headers.append(HeaderTuple(':authority', request.headers.pop('Host')))
-        http2_headers.append(NeverIndexedHeaderTuple(':path', request.url))
-        http2_headers.append(HeaderTuple(':scheme', self.context.schema))
-        http2_headers.append(HeaderTuple(':method', request.method))
-
-        sensitive_headers = ('apns-topic', 'authorization')
-
-        for key, value in request.headers.iteritems():
-            if key.lower() in sensitive_headers:
-                new = NeverIndexedHeaderTuple(key, value)
-            else:
-                new = HeaderTuple(key, value)
-            http2_headers.append(new)
+        http2_headers = [
+            (':authority', request.headers.pop('Host')),
+            (':path', request.url),
+            (':scheme', self.context.schema),
+            (':method', request.method),
+        ] + request.headers.items()
 
         self.context.h2_conn.send_headers(self.stream_id, http2_headers, end_stream=not request.body)
         self.context._flush_to_stream()
