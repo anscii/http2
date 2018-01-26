@@ -18,8 +18,6 @@ from h2.settings import SettingCodes
 import h2.connection
 import h2.exceptions
 
-from hpack.struct import HeaderTuple, NeverIndexedHeaderTuple
-
 from tornado import (
     httputil, log, stack_context,
     simple_httpclient, netutil
