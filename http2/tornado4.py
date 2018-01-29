@@ -17,6 +17,7 @@ import h2.events
 from h2.settings import SettingCodes
 import h2.connection
 import h2.exceptions
+from h2.config import H2Configuration
 
 from tornado import (
     httputil, log, stack_context,
@@ -121,6 +122,8 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         # open connection
         self.connection = None
         self.io_stream = None
+
+        self.conn_config = conn_kwargs.pop('conn_config', None)
 
         # back-off
         self.next_connect_time = 0
@@ -228,6 +231,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             enable_push=self.enable_push,
             max_buffer_size=self.max_buffer_size,
             initial_window_size=self.initial_window_size,
+            conn_config=self.conn_config
         )
         self.connection.add_event_handler(
             h2.events.RemoteSettingsChanged, self._adjust_settings
@@ -348,7 +352,7 @@ class _HTTP2ConnectionContext(object):
     """maintenance a http/2 connection state on specific io_stream
     """
     def __init__(self, io_stream, secure, enable_push,
-                 max_buffer_size, initial_window_size):
+                 max_buffer_size, initial_window_size, conn_config=None):
         self.io_stream = io_stream
         self.schema = 'https' if secure else 'http'
         self.enable_push = enable_push
@@ -359,7 +363,17 @@ class _HTTP2ConnectionContext(object):
         # h2 contexts
         self.stream_delegates = {}
         self.event_handlers = {}  # connection level event, event -> handler
-        self.h2_conn = h2.connection.H2Connection()
+        h2_config_dict = dict(
+                client_side=True
+            )
+        if conn_config:
+            h2_config_dict.update(conn_config)
+
+        h2_config = H2Configuration(
+                **h2_config_dict
+            )
+        self.h2_conn = h2.connection.H2Connection(config=h2_config)
+        # self.h2_conn = h2.connection.H2Connection()
         self.h2_conn.initiate_connection()
         self.h2_conn.update_settings({
             SettingCodes.ENABLE_PUSH: int(self.enable_push),
