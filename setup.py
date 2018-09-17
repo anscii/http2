@@ -38,6 +38,7 @@ setup(
         'h2>=2.5.0',
         'tornado>=4.0.0',
         'backports.ssl_match_hostname',
+        'future'
     ],
     license="Apache Software License",
     zip_safe=False,

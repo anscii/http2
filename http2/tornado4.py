@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
 
+from future import standard_library
+standard_library.install_aliases()
+from builtins import str
+from builtins import object
 import io
 import ssl
 import sys
 import copy
 import base64
 import socket
-import httplib
-import urlparse
+import http.client
+import urllib.parse
 import functools
 import contextlib
 import collections
@@ -152,17 +156,17 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         requeued_requests = {}
 
         if connection is not None:
-            for stream_id, stream in connection.stream_delegates.iteritems():
+            for stream_id, stream in connection.stream_delegates.items():
 
                 if stream._sent:
                     finished_requests[id(stream.request)] = stream
                 else:
                     requeued_requests[id(stream.request)] = stream
 
-            for stream in finished_requests.values():
+            for stream in list(finished_requests.values()):
                 stream.force_finish()
 
-            for stream in requeued_requests.values():
+            for stream in list(requeued_requests.values()):
                 stream._finalized = True
                 key = object()
                 req = _HTTP2Stream.prepare_request(stream.request, self.host)
@@ -197,7 +201,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             ))
 
         # move active request to pending
-        for key, (request, callback) in self.active.items():
+        for key, (request, callback) in list(self.active.items()):
             already_done = id(request) in finished_requests or id(request) in requeued_requests
             if not already_done:  # was added to self.active but not processed yet
                 
@@ -208,7 +212,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         self.active.clear()
 
     def _connection_terminated(self, event):
-        for stream_id, stream in self.connection.stream_delegates.iteritems():
+        for stream_id, stream in self.connection.stream_delegates.items():
             if not stream._sent and stream_id <= event.last_stream_id: # all these streams were processed by server
                 stream._sent = True
 
@@ -393,7 +397,7 @@ class _HTTP2ConnectionContext(object):
             return
 
         self.is_closed = True
-        for delegate in self.stream_delegates.values():
+        for delegate in list(self.stream_delegates.values()):
             delegate.on_connection_close(reason)
 
     @contextlib.contextmanager
@@ -494,7 +498,7 @@ class _HTTP2ConnectionContext(object):
 
             logger.debug('ignored event: %r, %r', event, event.__dict__)
 
-        for stream_id, stream_inbound in stream_inbounds.items():
+        for stream_id, stream_inbound in list(stream_inbounds.items()):
             self.h2_conn.acknowledge_received_data(stream_inbound, stream_id)
 
 
@@ -547,7 +551,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
             (':path', request.url),
             (':scheme', self.context.schema),
             (':method', request.method),
-        ] + request.headers.items()
+        ] + list(request.headers.items())
 
         self.context.h2_conn.send_headers(self.stream_id, http2_headers, end_stream=not request.body)
         self.context._flush_to_stream()
@@ -620,7 +624,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
 
     @classmethod
     def prepare_request(cls, request, default_host):
-        parsed = urlparse.urlsplit(_unicode(request.url))
+        parsed = urllib.parse.urlsplit(_unicode(request.url))
         if (request.method not in cls._SUPPORTED_METHODS and
                 not request.allow_nonstandard_methods):
             raise KeyError("unknown method %s" % request.method)
@@ -724,7 +728,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
             headers = self.build_http_headers(event.headers)
             status_code = int(headers.pop(':status'))
             start_line = httputil.ResponseStartLine(
-                'HTTP/2.0', status_code, httplib.responses[status_code]
+                'HTTP/2.0', status_code, http.client.responses[status_code]
             )
             self.headers_received(start_line, headers)
         elif isinstance(event, h2.events.DataReceived):
@@ -766,7 +770,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
                 self.code in (301, 302, 303, 307)):
             assert isinstance(self.request, _RequestProxy)
             new_request = copy.copy(self.request.request)
-            new_request.url = urlparse.urljoin(self.request.url,
+            new_request.url = urllib.parse.urljoin(self.request.url,
                                                self.headers["Location"])
             new_request.max_redirects = self.request.max_redirects - 1
             del new_request.headers["Host"]
@@ -795,7 +799,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
             original_request, self.code, reason=self.reason,
             headers=self.headers, request_time=self.io_loop.time() - self.start_time,
             buffer=buff, effective_url=self.request.url,
-            pushed_responses=self._pushed_responses.values(),
+            pushed_responses=list(self._pushed_responses.values()),
             new_request=new_request,
         )
         self._run_callback(response)
