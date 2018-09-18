@@ -7,7 +7,7 @@ __version__ = '0.2.5'
 
 # patch struct.unpack to accept memoryview object
 # for python < 2.7.5
-if sys.version < (2, 7, 5):
+if sys.version_info[:3] < (2, 7, 5):
     import struct
     _unpack = struct.unpack
 
