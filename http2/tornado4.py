@@ -141,7 +141,7 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
         settings = event.changed_settings.get(SettingCodes.MAX_CONCURRENT_STREAMS)
         if settings:
             self.max_clients = min(settings.new_value, self.max_streams)
-            if settings.new_value > settings.original_value:
+            if settings.original_value is None or settings.new_value > settings.original_value:
                 self._process_queue()
 
     def _on_connection_close(self, io_stream, reason):
