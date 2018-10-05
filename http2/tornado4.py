@@ -541,7 +541,7 @@ class _HTTP2Stream(httputil.HTTPMessageDelegate):
     def build_http_headers(cls, headers):
         http_headers = httputil.HTTPHeaders()
         for name, value in headers:
-            http_headers.add(name, value)
+            http_headers.add(name.decode('utf-8'), value.decode('utf-8'))
 
         return http_headers
 
