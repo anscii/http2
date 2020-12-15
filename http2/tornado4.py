@@ -131,7 +131,9 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
 
         # back-off
         self.next_connect_time = 0
-        self.connection_backoff = self.CONNECTION_BACKOFF_STEP
+        self.connection_backoff_step = conn_kwargs.pop('max_connection_backoff_step', self.CONNECTION_BACKOFF_STEP)
+        self.connection_backoff = self.connection_backoff_step
+        self.max_connection_backoff = conn_kwargs.pop('max_connection_backoff', self.MAX_CONNECTION_BACKOFF)
 
         self.connection_factory.make_connection(
             self._on_connection_ready, self._on_connection_close)
@@ -182,8 +184,8 @@ class SimpleAsyncHTTP2Client(simple_httpclient.SimpleAsyncHTTPClient):
             now_time + self.connection_backoff)
 
         self.connection_backoff = min(
-            self.connection_backoff + self.CONNECTION_BACKOFF_STEP,
-            self.MAX_CONNECTION_BACKOFF)
+            self.connection_backoff + self.connection_backoff_step,
+            self.max_connection_backoff)
 
         if io_stream is None:
             logger.info(
